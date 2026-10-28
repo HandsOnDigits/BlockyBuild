@@ -1,6 +1,9 @@
 mod meshing;
 mod terrain;
 
+mod block_interaction;
+use block_interaction::{BlockInteractionPlugin, EditableTerrain};
+
 mod player;
 use player::PlayerPlugin;
 
@@ -18,6 +21,7 @@ fn main() {
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(PlayerPlugin)
         .add_systems(Startup, setup)
+        .add_plugins(BlockInteractionPlugin)
         .run();
 }
 
@@ -31,20 +35,25 @@ fn setup(
 
     let mesh_handle = meshes.add(chunk_mesh.mesh);
 
-    // Build a static terrain collider from the same triangle geometry.
-    let collider = Collider::trimesh(chunk_mesh.vertices, chunk_mesh.triangles);
+    let terrain_entity = commands
+        .spawn((
+            Mesh3d(mesh_handle.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                perceptual_roughness: 1.0,
+                ..default()
+            })),
+            RigidBody::Static,
+            Collider::trimesh(chunk_mesh.vertices, chunk_mesh.triangles),
+            Transform::IDENTITY,
+        ))
+        .id();
 
-    commands.spawn((
-        Mesh3d(mesh_handle),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 1.0,
-            ..default()
-        })),
-        RigidBody::Static,
-        collider,
-        Transform::IDENTITY,
-    ));
+    commands.insert_resource(EditableTerrain {
+        chunk,
+        entity: terrain_entity,
+        mesh: mesh_handle,
+    });
 
     commands.spawn((
         DirectionalLight {
