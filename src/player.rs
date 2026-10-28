@@ -50,11 +50,15 @@ fn spawn_player(mut commands: Commands) {
             Player,
             PlayerLook::default(),
             RigidBody::Dynamic,
-            Collider::capsule(PLAYER_RADIUS, PLAYER_LENGTH),
+            (
+                Collider::capsule(PLAYER_RADIUS, PLAYER_LENGTH),
+                Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
+            ),
             LockedAxes::ROTATION_LOCKED,
             LinearVelocity::default(),
+            LinearDamping(0.0),
+            AngularDamping(0.0),
             Transform::from_xyz(31.0, 62.0, 31.0),
-            Visibility::default(),
         ))
         .with_children(|parent| {
             parent.spawn((
@@ -131,6 +135,7 @@ fn player_movement(
         return;
     };
 
+    // Movement relative to the direction the player is facing.
     let forward = Vec3::new(-look.yaw.sin(), 0.0, -look.yaw.cos());
     let right = Vec3::new(look.yaw.cos(), 0.0, -look.yaw.sin());
 
@@ -153,26 +158,52 @@ fn player_movement(
         direction = direction.normalize();
     }
 
-    // Set horizontal speed without overwriting vertical velocity.
+    // Control horizontal speed without overwriting vertical velocity.
     velocity.x = direction.x * PLAYER_SPEED;
     velocity.z = direction.z * PLAYER_SPEED;
 
-    if keyboard.just_pressed(KeyCode::Space) {
-        let shape = Collider::capsule(PLAYER_RADIUS * 0.95, PLAYER_LENGTH * 0.95);
-        let grounded = spatial_query
-            .cast_shape(
-                &shape,
-                transform.translation,
-                transform.rotation,
-                Dir3::NEG_Y,
-                &ShapeCastConfig::from_max_distance(0.15),
-                &SpatialQueryFilter::from_excluded_entities([entity]),
-            )
-            .is_some_and(|hit| (transform.rotation * hit.normal1).dot(Vec3::Y) > 0.65);
+    let shape = Collider::capsule(PLAYER_RADIUS * 0.95, PLAYER_LENGTH * 0.95);
 
-        if grounded {
-            velocity.y = JUMP_SPEED;
-        }
+    let filter = SpatialQueryFilter::from_excluded_entities([entity]);
+
+    // Check for ground directly below the player.
+    let grounded = spatial_query
+        .cast_shape(
+            &shape,
+            transform.translation,
+            transform.rotation,
+            Dir3::NEG_Y,
+            &ShapeCastConfig::from_max_distance(0.15),
+            &filter,
+        )
+        .is_some_and(|hit| {
+            let normal = transform.rotation * hit.normal1;
+            normal.dot(Vec3::Y) > 0.65
+        });
+
+    // Check all four horizontal directions for a wall.
+    // Ignore floor/ceiling contacts by checking the surface normal.
+    let touching_wall = [Dir3::X, Dir3::NEG_X, Dir3::Z, Dir3::NEG_Z]
+        .into_iter()
+        .any(|wall_direction| {
+            spatial_query
+                .cast_shape(
+                    &shape,
+                    transform.translation,
+                    transform.rotation,
+                    wall_direction,
+                    &ShapeCastConfig::from_max_distance(0.12),
+                    &filter,
+                )
+                .is_some_and(|hit| {
+                    let normal = transform.rotation * hit.normal1;
+                    normal.y.abs() < 0.35
+                })
+        });
+
+    // A wall permits a normal vertical jump, not a wall-launch.
+    if keyboard.just_pressed(KeyCode::Space) && (grounded || touching_wall) {
+        velocity.y = JUMP_SPEED;
     }
 }
 
